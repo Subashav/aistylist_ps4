@@ -56,6 +56,26 @@ if _web_dir.exists():
     app.mount("/app", StaticFiles(directory=str(_web_dir), html=True), name="webapp")
 
 
+@app.get("/media/{key:path}")
+def media(key: str):
+    """Serve images stored in the private Neon bucket (keys contain random ids, so URLs are unguessable)."""
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+    from app.services.storage import s3_enabled, s3_get
+
+    if not s3_enabled() or ".." in key:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        obj = s3_get(key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=obj["Body"].read(),
+        media_type=obj.get("ContentType") or "application/octet-stream",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 @app.on_event("startup")
 async def startup_system_check():
     if ON_VERCEL:  # serverless: no GPU to report, skip the (slow) banner

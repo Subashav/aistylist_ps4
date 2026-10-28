@@ -70,3 +70,5 @@ frontend/build/windows/
 Thumbs.db
 
 .vercel
+.env.local
+.neon

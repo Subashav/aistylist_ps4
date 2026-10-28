@@ -23,3 +23,5 @@ httpx>=0.27.0
 #   pip install einops safetensors onnxruntime transformers
 # On CPU-only laptops the heavy try-on is skipped automatically (set VTON_ALLOW_CPU=true to force it).
 # ---------------------------------------------------------------------------
+boto3>=1.34
+psycopg2-binary>=2.9.9

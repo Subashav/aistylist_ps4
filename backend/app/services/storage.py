@@ -15,13 +15,62 @@ from app.config import settings, BASE_DIR, DATA_DIR
 logger = logging.getLogger(__name__)
 
 
+def s3_enabled() -> bool:
+    return bool(settings.AWS_ENDPOINT_URL_S3 and settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY)
+
+
 def blob_enabled() -> bool:
-    return bool(settings.BLOB_READ_WRITE_TOKEN)
+    """True when some durable store (Neon Object Storage or Vercel Blob) is configured."""
+    return s3_enabled() or bool(settings.BLOB_READ_WRITE_TOKEN)
+
+
+_s3_client = None
+
+
+def _s3():
+    global _s3_client
+    if _s3_client is None:
+        import boto3
+        from botocore.config import Config
+
+        _s3_client = boto3.client(
+            "s3",
+            endpoint_url=settings.AWS_ENDPOINT_URL_S3,
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            region_name=settings.AWS_REGION,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        )
+    return _s3_client
+
+
+def s3_get(key: str):
+    """Fetch an object from the private Neon bucket (used by the /media proxy route)."""
+    return _s3().get_object(Bucket=settings.NEON_BUCKET, Key=key)
 
 
 def persist_bytes(data: bytes, pathname: str, content_type: Optional[str] = None) -> Optional[str]:
-    """Upload bytes to Vercel Blob; returns the public URL, or None if Blob isn't configured/failed."""
-    if not blob_enabled():
+    """
+    Store bytes durably and return the URL to use in API responses, or None when nothing is configured.
+    Neon Object Storage (private bucket) is served back through the app's /media/<key> route;
+    Vercel Blob returns its own public URL.
+    """
+    if s3_enabled():
+        import uuid
+
+        key = f"{pathname.rsplit('.', 1)[0]}_{uuid.uuid4().hex[:8]}.{pathname.rsplit('.', 1)[-1]}" if "." in pathname else pathname
+        try:
+            _s3().put_object(
+                Bucket=settings.NEON_BUCKET,
+                Key=key,
+                Body=data,
+                ContentType=content_type or mimetypes.guess_type(pathname)[0] or "application/octet-stream",
+            )
+            return f"/media/{key}"
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Neon Object Storage upload failed for %s: %s", pathname, exc)
+            return None
+    if not settings.BLOB_READ_WRITE_TOKEN:
         return None
     try:
         import os

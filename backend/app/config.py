@@ -11,7 +11,7 @@ DATA_DIR = Path("/tmp/ai_stylist") if ON_VERCEL else BASE_DIR
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(BASE_DIR / ".env"),
+        env_file=(str(BASE_DIR / ".env"), str(BASE_DIR.parent / ".env.local")),
         env_file_encoding="utf-8",
         extra="allow",
     )
@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     FASHN_TIMEOUT: int = 120  # seconds to wait for one try-on result
     # Vercel Blob (durable image storage). Set automatically when a Blob store is connected.
     BLOB_READ_WRITE_TOKEN: str = ""
+    # Neon Object Storage (S3-compatible, private bucket). Injected by `neon deploy` / `neon env pull`.
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_ENDPOINT_URL_S3: str = ""
+    AWS_REGION: str = "us-east-2"
+    NEON_BUCKET: str = "uploads"
     BLOB_ACCESS: str = "public"  # must match the Blob store's access mode
     TRYON_MAX_LOOKS: int = 2  # 2 personalized try-on images; remaining are complete outfit & material guides
     VIRTUAL_TRYON_DIR: Path = (DATA_DIR / "uploads" / "virtual_tryon").resolve()
