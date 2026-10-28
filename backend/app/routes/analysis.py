@@ -370,6 +370,24 @@ async def direct_virtual_tryon(
     )
 
 
+@router.get("/diagnostics/tryon")
+async def tryon_diagnostics():
+    """Reports which try-on provider is active and whether it can reach its backend (uses no GPU quota)."""
+    import asyncio
+
+    prov = get_virtual_tryon_provider().local_provider
+    info = {"provider": prov.__class__.__name__, "ready": bool(getattr(prov, "is_ready", False))}
+    if prov.__class__.__name__ == "HFSpaceTryOnProvider":
+        try:
+            await asyncio.wait_for(asyncio.to_thread(prov._get_client), timeout=60)
+            info["space_reachable"] = True
+        except Exception as exc:  # noqa: BLE001
+            info["space_reachable"] = False
+            info["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+    info["last_error"] = getattr(prov, "load_error", None)
+    return info
+
+
 @router.get("/diagnostics/system")
 def get_system_diagnostics():
     """

@@ -1,7 +1,14 @@
 """Vercel serverless entrypoint: exposes the FastAPI app from ./backend as an ASGI function."""
+import os
 import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
+
+# Only /tmp is writable on Vercel: keep Hugging Face / Gradio caches and temp files there.
+os.environ.setdefault("HF_HOME", "/tmp/hf")
+os.environ.setdefault("GRADIO_TEMP_DIR", "/tmp/gradio")
+os.makedirs("/tmp/hf", exist_ok=True)
+os.makedirs("/tmp/gradio", exist_ok=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
