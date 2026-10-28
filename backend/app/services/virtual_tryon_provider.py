@@ -86,7 +86,8 @@ class DefaultVirtualTryOnProvider(VirtualTryOnProvider):
         allow_fallback_preview: bool = True,
         **kwargs,
     ) -> Dict[str, Any]:
-        # 1. Attempt Local FASHN VTON
+        # 1. Attempt the configured try-on engine
+        vton_res = None
         if settings.VTON_ENABLED:
             vton_res = await self.local_provider.generate_try_on(
                 person_image=person_image,
@@ -128,6 +129,7 @@ class DefaultVirtualTryOnProvider(VirtualTryOnProvider):
                 "provider": "preview_compositor",
                 "category": category,
                 "message": "FASHN VTON unavailable; generated AI Outfit Preview.",
+                "try_on_error": (vton_res or {}).get("message"),
             }
         except Exception as comp_err:
             logger.error("Compositor fallback failed: %s", comp_err)

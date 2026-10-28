@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 MAX_SIDE = 1024
 
 
-def _to_jpeg_file(img_input: Union[str, Path, bytes, Image.Image], directory: Path, stem: str) -> str:
+def _to_jpeg_file(img_input: Union[str, Path, bytes, Image.Image], directory: Path, stem: str, fmt: str = "JPEG") -> str:
     if isinstance(img_input, Image.Image):
         img = img_input
     elif isinstance(img_input, (bytes, bytearray)):
@@ -34,8 +34,12 @@ def _to_jpeg_file(img_input: Union[str, Path, bytes, Image.Image], directory: Pa
         img = Image.open(str(img_input))
     img = img.convert("RGB")
     img.thumbnail((MAX_SIDE, MAX_SIDE))
-    path = directory / f"{stem}.jpg"
-    img.save(path, format="JPEG", quality=92)
+    if fmt == "PNG":
+        path = directory / f"{stem}.png"
+        img.save(path, format="PNG")
+    else:
+        path = directory / f"{stem}.jpg"
+        img.save(path, format="JPEG", quality=92)
     return str(path)
 
 
@@ -81,8 +85,8 @@ class HFSpaceTryOnProvider:
             description,
             True,   # auto-generated person mask
             False,  # no crop/resize
-            settings.HF_TRYON_STEPS,
-            float(seed),
+            int(settings.HF_TRYON_STEPS),
+            int(seed),
             api_name="/tryon",
         )
         result_path = out[0] if isinstance(out, (list, tuple)) else out
@@ -112,8 +116,8 @@ class HFSpaceTryOnProvider:
             with tempfile.TemporaryDirectory() as tmp:
                 tmpdir = Path(tmp)
                 person_path = await asyncio.to_thread(_to_jpeg_file, person_image, tmpdir, "person")
-                garment_path = await asyncio.to_thread(_to_jpeg_file, garment_image, tmpdir, "garment")
-                description = f"{detected_colour_shade} {category}".strip() or "a garment"
+                garment_path = await asyncio.to_thread(_to_jpeg_file, garment_image, tmpdir, "garment", "PNG")
+                description = f"a {detected_colour_shade} {category}".strip().lower() if detected_colour_shade else f"a {category}".lower()
                 img_bytes = await asyncio.wait_for(
                     asyncio.to_thread(self._predict_blocking, person_path, garment_path, description, seed),
                     timeout=settings.HF_TRYON_TIMEOUT,

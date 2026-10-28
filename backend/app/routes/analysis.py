@@ -179,6 +179,7 @@ async def analyze_clothing(
 
     outfit_suggestions_with_visuals = []
     has_actual_tryon = False
+    try_on_message = None
 
     # Execute exactly up to 2 looks for real FASHN VTON; remaining looks are Complete Outfit & Material Guides
     for idx, outfit_data in enumerate(recommendations["outfit_suggestions"]):
@@ -197,6 +198,8 @@ async def analyze_clothing(
                 )
                 img_url = res.get("image_url")
                 res_type = res.get("result_type", "actual_try_on")
+                if res_type != "actual_try_on" and not try_on_message:
+                    try_on_message = res.get("try_on_error") or res.get("message")
                 if res_type == "actual_try_on":
                     has_actual_tryon = True
 
@@ -285,6 +288,7 @@ async def analyze_clothing(
         is_low_confidence=color_info["is_low_confidence"],
         clothing_image_url=clothing_url,
         user_image_url=u_url,
+        try_on_message=try_on_message,
         recommended_colours=[ColourSwatch(**s) for s in recommendations["recommended_colours"]],
         outfit_suggestions=outfit_suggestions_with_visuals,
         overall_advice=recommendations["overall_advice"],

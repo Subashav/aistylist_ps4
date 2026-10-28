@@ -81,6 +81,7 @@ class AnalysisResponse(BaseModel):
     is_low_confidence: bool = False
     clothing_image_url: str
     user_image_url: Optional[str] = None
+    try_on_message: Optional[str] = None  # why a real try-on image could not be produced (if so)
     recommended_colours: List[ColourSwatch]
     outfit_suggestions: List[OutfitSuggestion]
     overall_advice: str

@@ -3296,7 +3296,8 @@
         const data = await resp.json();
         currentAnalysisData = data;
         renderResults(data);
-        showToast('4 looks styled successfully');
+        showToast(data.try_on_message ? ('Try-on image unavailable: ' + data.try_on_message) : '4 looks styled successfully');
+        if (data.try_on_message) console.warn('Try-on note:', data.try_on_message);
       } catch (err) {
         console.error('Styling analysis error:', err);
         showToast(err.message || 'Something went wrong. Please try again.');
