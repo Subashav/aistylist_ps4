@@ -137,9 +137,9 @@ class HFSpaceTryOnProvider:
             self._client = None  # reconnect next time
             self._load_error = str(err)
             msg = str(err)
-            if "quota" in msg.lower():
+            if "quota" in msg.lower() or msg.strip("'\" ") == "RuntimeError":  # bare RuntimeError = ZeroGPU refused (no quota left for this IP)
                 msg = ("Free GPU quota for the try-on model is used up for now. Try again later, "
-                       "or set a free HF_TOKEN to get a larger daily quota.")
+                       "or set a free HF_TOKEN (huggingface.co/settings/tokens) to get your own daily quota.")
             logger.error("HF Space try-on failed: %s", err)
             return {
                 "success": False,
