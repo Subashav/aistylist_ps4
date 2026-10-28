@@ -66,12 +66,12 @@ def media(key: str):
     if not s3_enabled() or ".." in key:
         raise HTTPException(status_code=404, detail="Not found")
     try:
-        obj = s3_get(key)
+        body, ctype = s3_get(key)
     except Exception:
         raise HTTPException(status_code=404, detail="Not found")
     return Response(
-        content=obj["Body"].read(),
-        media_type=obj.get("ContentType") or "application/octet-stream",
+        content=body,
+        media_type=ctype or "application/octet-stream",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 

@@ -24,29 +24,51 @@ def blob_enabled() -> bool:
     return s3_enabled() or bool(settings.BLOB_READ_WRITE_TOKEN)
 
 
-_s3_client = None
+def _sigv4_request(method: str, key: str, body: bytes = b"", content_type: str = ""):
+    """Minimal AWS Signature V4 request to the S3-compatible Neon endpoint (path-style). Avoids boto3's size."""
+    import datetime
+    import hashlib
+    import hmac
+    from urllib.parse import quote, urlparse
 
+    import httpx
 
-def _s3():
-    global _s3_client
-    if _s3_client is None:
-        import boto3
-        from botocore.config import Config
+    endpoint = settings.AWS_ENDPOINT_URL_S3.rstrip("/")
+    host = urlparse(endpoint).netloc
+    uri = "/" + quote(f"{settings.NEON_BUCKET}/{key}", safe="/")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    amz_date, date = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+    payload_hash = hashlib.sha256(body).hexdigest()
+    headers = {"host": host, "x-amz-content-sha256": payload_hash, "x-amz-date": amz_date}
+    if content_type:
+        headers["content-type"] = content_type
+    signed = ";".join(sorted(headers))
+    nl = chr(10)
+    canonical_headers = "".join(f"{k}:{headers[k]}{nl}" for k in sorted(headers))
+    canonical = nl.join([method, uri, "", canonical_headers, signed, payload_hash])
+    scope = f"{date}/{settings.AWS_REGION}/s3/aws4_request"
+    to_sign = nl.join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
 
-        _s3_client = boto3.client(
-            "s3",
-            endpoint_url=settings.AWS_ENDPOINT_URL_S3,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            region_name=settings.AWS_REGION,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
-        )
-    return _s3_client
+    def _h(k, m):
+        return hmac.new(k, m.encode(), hashlib.sha256).digest()
+
+    k = _h(("AWS4" + settings.AWS_SECRET_ACCESS_KEY).encode(), date)
+    for part in (settings.AWS_REGION, "s3", "aws4_request"):
+        k = _h(k, part)
+    signature = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
+    headers["authorization"] = (
+        f"AWS4-HMAC-SHA256 Credential={settings.AWS_ACCESS_KEY_ID}/{scope}, SignedHeaders={signed}, Signature={signature}"
+    )
+    headers.pop("host")
+    r = httpx.request(method, endpoint + uri, headers=headers, content=body or None, timeout=60)
+    r.raise_for_status()
+    return r
 
 
 def s3_get(key: str):
-    """Fetch an object from the private Neon bucket (used by the /media proxy route)."""
-    return _s3().get_object(Bucket=settings.NEON_BUCKET, Key=key)
+    """Fetch an object from the private Neon bucket -> (bytes, content_type). Used by the /media route."""
+    r = _sigv4_request("GET", key)
+    return r.content, r.headers.get("content-type")
 
 
 def persist_bytes(data: bytes, pathname: str, content_type: Optional[str] = None) -> Optional[str]:
@@ -60,12 +82,7 @@ def persist_bytes(data: bytes, pathname: str, content_type: Optional[str] = None
 
         key = f"{pathname.rsplit('.', 1)[0]}_{uuid.uuid4().hex[:8]}.{pathname.rsplit('.', 1)[-1]}" if "." in pathname else pathname
         try:
-            _s3().put_object(
-                Bucket=settings.NEON_BUCKET,
-                Key=key,
-                Body=data,
-                ContentType=content_type or mimetypes.guess_type(pathname)[0] or "application/octet-stream",
-            )
+            _sigv4_request("PUT", key, data, content_type or mimetypes.guess_type(pathname)[0] or "application/octet-stream")
             return f"/media/{key}"
         except Exception as exc:  # noqa: BLE001
             logger.error("Neon Object Storage upload failed for %s: %s", pathname, exc)
