@@ -5,7 +5,7 @@ import asyncio
 import logging
 import cv2
 import numpy as np
-from typing import Optional
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -181,21 +181,54 @@ async def analyze_clothing(
     has_actual_tryon = False
     try_on_message = None
 
-    # Execute exactly up to 2 looks for real FASHN VTON; remaining looks are Complete Outfit & Material Guides
-    for idx, outfit_data in enumerate(recommendations["outfit_suggestions"]):
+    # Look 1 = the user's own portrait wearing the garment. Look 2 = the same garment on a full-body
+    # editorial model who is already in a complete outfit (trousers, shoes...), i.e. a styled head-to-toe look.
+    # Without a portrait, both looks use editorial models.
+    models_dir = BASE_DIR / "app" / "assets" / "models"
+    has_portrait = bool(u_path and u_path.exists())
+
+    def _pick_model(look: Dict[str, Any], slot: int) -> Path:
+        text = f"{look.get('title', '')} {look.get('style', '')}".lower()
+        if "evening" in text:
+            name = "evening_minimalist.jpg"
+        elif "layer" in text or "elevated" in text:
+            name = "elevated_casual___layered.jpg"
+        elif "smart" in text or "elegan" in text or slot == 1:
+            name = "smart_casual_elegance.jpg"
+        else:
+            name = "casual_classic.jpg"
+        return models_dir / name
+
+    def _person_for(idx: int, look: Dict[str, Any]):
+        if idx == 0 and has_portrait:
+            return u_path, "you"
+        return _pick_model(look, idx), "editorial_model"
+
+    async def _run_look(idx: int, look: Dict[str, Any]):
+        person, source = _person_for(idx, look)
+        res = await vton_provider.generate_try_on(
+            person_image=person,
+            garment_image=c_path,
+            category=category,
+            styling_context=look,
+            detected_colour_shade=color_info["colour_shade"],
+            detected_colour_hex=color_info["hex_value"],
+            semantic_data=semantic_data,
+            seed=42 + idx * 101,
+        )
+        return res, source
+
+    looks = recommendations["outfit_suggestions"]
+    jobs = [_run_look(i, l) for i, l in enumerate(looks) if i < max_looks_to_generate]
+    job_results = await asyncio.gather(*jobs, return_exceptions=True)  # parallel; different HF accounts
+
+    for idx, outfit_data in enumerate(looks):
         try:
-            if idx < max_looks_to_generate and u_path and u_path.exists():
-                look_seed = 42 + idx * 101
-                res = await vton_provider.generate_try_on(
-                    person_image=u_path,
-                    garment_image=c_path,
-                    category=category,
-                    styling_context=outfit_data,
-                    detected_colour_shade=color_info["colour_shade"],
-                    detected_colour_hex=color_info["hex_value"],
-                    semantic_data=semantic_data,
-                    seed=look_seed,
-                )
+            if idx < max_looks_to_generate:
+                outcome = job_results[idx]
+                if isinstance(outcome, Exception):
+                    raise outcome
+                res, person_source = outcome
                 img_url = res.get("image_url")
                 res_type = res.get("result_type", "actual_try_on")
                 if res_type != "actual_try_on" and not try_on_message:
@@ -211,10 +244,11 @@ async def analyze_clothing(
                         result_type=res_type,
                         try_on_type=res_type,
                         provider=res.get("provider", "fashn_vton_local"),
+                        person_source=person_source,
                     )
                 )
             else:
-                # Looks 3 & 4 (or when user portrait not supplied):
+                # Looks 3 & 4 (beyond the generated looks):
                 # Complete Outfit & Material Guide with fabric coordination & palette
                 outfit_suggestions_with_visuals.append(
                     OutfitSuggestion(

@@ -31,6 +31,8 @@ class OutfitSuggestion(BaseModel):
     result_type: Optional[str] = "actual_try_on"
     try_on_type: Optional[str] = "actual_try_on"
     provider: Optional[str] = "fashn_vton_local"
+    # Who is shown wearing the garment: "you" (your portrait) or "editorial_model" (a complete styled outfit)
+    person_source: Optional[str] = None
 
     @model_validator(mode="after")
     def sync_image_urls(self):

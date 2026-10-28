@@ -3431,7 +3431,7 @@
           <div class="look-card-header">
             <span class="look-number-label">${lookNumStr}</span>
             <span class="look-badge ${isActualTryOn ? 'actual-tryon' : 'guide-mode'}">
-              ${isActualTryOn ? 'ACTUAL TRY-ON (FASHN VTON)' : 'OUTFIT & MATERIAL GUIDE'}
+              ${isActualTryOn ? (look.person_source === 'editorial_model' ? 'STYLED LOOK · COMPLETE OUTFIT' : 'ACTUAL TRY-ON · YOU') : 'OUTFIT & MATERIAL GUIDE'}
             </span>
           </div>
 

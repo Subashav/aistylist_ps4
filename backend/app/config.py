@@ -66,8 +66,8 @@ class Settings(BaseSettings):
     HF_TRYON_ENABLED: bool = True
     HF_TRYON_SPACE: str = "yisol/IDM-VTON"
     HF_TRYON_STEPS: int = 30
-    # Free ZeroGPU quota is small (~tens of seconds per try-on): only render this many looks per analysis.
-    HF_TRYON_MAX_LOOKS: int = 1
+    # Free ZeroGPU quota is limited (~tens of seconds per try-on): render at most this many looks per analysis.
+    HF_TRYON_MAX_LOOKS: int = 2
     HF_TRYON_TIMEOUT: int = 150
     HF_TOKEN: str = ""
     # Several team members' tokens, comma-separated (each account has its own daily GPU quota).
