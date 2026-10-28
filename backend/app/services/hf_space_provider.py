@@ -61,9 +61,13 @@ class HFSpaceTryOnProvider:
         if self._client is None:
             from gradio_client import Client
 
+            import inspect
+
             kwargs = {"verbose": False}
             if settings.HF_TOKEN:
-                kwargs["hf_token"] = settings.HF_TOKEN
+                # gradio_client 1.x calls this `hf_token`, 2.x renamed it to `token`.
+                params = inspect.signature(Client.__init__).parameters
+                kwargs["token" if "token" in params else "hf_token"] = settings.HF_TOKEN
             self._client = Client(settings.HF_TRYON_SPACE, **kwargs)
         return self._client
 
