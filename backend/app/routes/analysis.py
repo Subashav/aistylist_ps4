@@ -378,6 +378,11 @@ async def tryon_diagnostics():
     prov = get_virtual_tryon_provider().local_provider
     info = {"provider": prov.__class__.__name__, "ready": bool(getattr(prov, "is_ready", False))}
     if prov.__class__.__name__ == "HFSpaceTryOnProvider":
+        # Never reveal the token itself - only whether one is configured and looks valid.
+        tok = settings.HF_TOKEN or ""
+        info["hf_token_configured"] = bool(tok)
+        info["hf_token_looks_valid"] = tok.startswith("hf_") and len(tok) > 20
+    if prov.__class__.__name__ == "HFSpaceTryOnProvider":
         try:
             await asyncio.wait_for(asyncio.to_thread(prov._get_client), timeout=60)
             info["space_reachable"] = True
