@@ -19,6 +19,7 @@ from PIL import Image
 from app.config import settings
 from app.services.fashn_vton_local_provider import FASHNVTONLocalProvider
 from app.services.fashn_api_provider import FASHNAPIProvider
+from app.services.hf_space_provider import HFSpaceTryOnProvider
 from app.services.try_on_provider import PersonalizedTryOnCompositor
 
 logger = logging.getLogger(__name__)
@@ -62,13 +63,18 @@ class DefaultVirtualTryOnProvider(VirtualTryOnProvider):
     """
 
     def __init__(self, local_vton_provider: Optional[FASHNVTONLocalProvider] = None):
-        # Hosted FASHN API when a key is configured (Vercel / no GPU); otherwise the local GPU model.
+        # Provider order: paid FASHN API (if keyed) -> local GPU model (if a CUDA GPU is present)
+        # -> free Hugging Face Space (IDM-VTON; works anywhere, incl. Vercel).
         if local_vton_provider is not None:
             self.local_provider = local_vton_provider
         elif settings.FASHN_API_KEY:
             self.local_provider = FASHNAPIProvider()
         else:
-            self.local_provider = FASHNVTONLocalProvider()
+            local = FASHNVTONLocalProvider()
+            if local.device == "cuda" or not settings.HF_TRYON_ENABLED:
+                self.local_provider = local
+            else:
+                self.local_provider = HFSpaceTryOnProvider()
         self.compositor_fallback = PersonalizedTryOnCompositor()
 
     async def generate_try_on(

@@ -171,6 +171,8 @@ async def analyze_clothing(
     vton_provider = get_virtual_tryon_provider()
     max_looks_to_generate = getattr(settings, "TRYON_MAX_LOOKS", 2)
     _local = getattr(vton_provider, "local_provider", None)
+    if _local.__class__.__name__ == "HFSpaceTryOnProvider":
+        max_looks_to_generate = min(max_looks_to_generate, settings.HF_TRYON_MAX_LOOKS)
     if _local is not None and getattr(_local, "device", "cpu") == "cpu" and not settings.VTON_ALLOW_CPU:
         logger.info("No CUDA GPU detected: skipping local virtual try-on (set VTON_ALLOW_CPU=true to force it).")
         max_looks_to_generate = 0

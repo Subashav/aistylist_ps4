@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     FASHN_MODEL_NAME: str = "tryon-v1.6"
     FASHN_MODE: str = "balanced"  # performance | balanced | quality
     FASHN_TIMEOUT: int = 120  # seconds to wait for one try-on result
+    # Free hosted try-on (default): public Hugging Face Space running IDM-VTON on ZeroGPU. No key needed;
+    # a free HF_TOKEN gives a bigger daily GPU quota. Licence: CC BY-NC-SA 4.0 (non-commercial).
+    HF_TRYON_ENABLED: bool = True
+    HF_TRYON_SPACE: str = "yisol/IDM-VTON"
+    HF_TRYON_STEPS: int = 30
+    # Free ZeroGPU quota is small (~tens of seconds per try-on): only render this many looks per analysis.
+    HF_TRYON_MAX_LOOKS: int = 1
+    HF_TRYON_TIMEOUT: int = 150
+    HF_TOKEN: str = ""
     # Vercel Blob (durable image storage). Set automatically when a Blob store is connected.
     BLOB_READ_WRITE_TOKEN: str = ""
     # Neon Object Storage (S3-compatible, private bucket). Injected by `neon deploy` / `neon env pull`.
