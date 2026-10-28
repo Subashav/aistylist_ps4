@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     HF_TRYON_MAX_LOOKS: int = 1
     HF_TRYON_TIMEOUT: int = 150
     HF_TOKEN: str = ""
+    # Several team members' tokens, comma-separated (each account has its own daily GPU quota).
+    # The app rotates to the next token when one runs out.
+    HF_TOKENS: str = ""
     # Vercel Blob (durable image storage). Set automatically when a Blob store is connected.
     BLOB_READ_WRITE_TOKEN: str = ""
     # Neon Object Storage (S3-compatible, private bucket). Injected by `neon deploy` / `neon env pull`.

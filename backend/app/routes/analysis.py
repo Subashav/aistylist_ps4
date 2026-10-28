@@ -383,12 +383,15 @@ async def tryon_diagnostics():
     info = {"provider": prov.__class__.__name__, "ready": bool(getattr(prov, "is_ready", False))}
     if prov.__class__.__name__ == "HFSpaceTryOnProvider":
         # Never reveal the token itself - only whether one is configured and looks valid.
-        tok = settings.HF_TOKEN or ""
-        info["hf_token_configured"] = bool(tok)
-        info["hf_token_looks_valid"] = tok.startswith("hf_") and len(tok) > 20
+        from app.services.hf_space_provider import _configured_tokens
+
+        toks = [t for t in _configured_tokens() if t]
+        info["hf_accounts_configured"] = len(toks)
+        info["hf_tokens_look_valid"] = all(t.startswith("hf_") and len(t) > 20 for t in toks) if toks else False
     if prov.__class__.__name__ == "HFSpaceTryOnProvider":
+        from app.services.hf_space_provider import _configured_tokens
         try:
-            await asyncio.wait_for(asyncio.to_thread(prov._get_client), timeout=60)
+            await asyncio.wait_for(asyncio.to_thread(prov._get_client, (_configured_tokens() or [""])[0]), timeout=60)
             info["space_reachable"] = True
         except Exception as exc:  # noqa: BLE001
             info["space_reachable"] = False

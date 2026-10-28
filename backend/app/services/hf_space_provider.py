@@ -43,11 +43,31 @@ def _to_jpeg_file(img_input: Union[str, Path, bytes, Image.Image], directory: Pa
     return str(path)
 
 
+def _configured_tokens():
+    """All distinct HF tokens (HF_TOKENS comma list + HF_TOKEN); [""] means anonymous."""
+    raw = (settings.HF_TOKENS or "").split(",") + [settings.HF_TOKEN or ""]
+    seen, out = set(), []
+    for t in (x.strip() for x in raw):
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out or [""]
+
+
+def _is_quota_error(msg: str) -> bool:
+    low = msg.lower()
+    # A bare RuntimeError is how ZeroGPU refuses a request when the account has no quota left.
+    return "quota" in low or "unauthorized" in low or "401" in low or msg.strip("'\" ") == "RuntimeError"
+
+
 class HFSpaceTryOnProvider:
     device = "api"
+    COOLDOWN_SECONDS = 30 * 60  # skip an exhausted token for a while before trying it again
 
     def __init__(self):
-        self._client = None
+        self._clients = {}
+        self._exhausted_until = {}
+        self._rr = 0
         self._load_error: Optional[str] = None
 
     @property
@@ -61,25 +81,34 @@ class HFSpaceTryOnProvider:
     def load_model(self):  # interface parity
         return
 
-    def _get_client(self):
-        if self._client is None:
-            from gradio_client import Client
-
+    def _get_client(self, token: str = ""):
+        if token not in self._clients:
             import inspect
 
+            from gradio_client import Client
+
             kwargs = {"verbose": False}
-            if settings.HF_TOKEN:
+            if token:
                 # gradio_client 1.x calls this `hf_token`, 2.x renamed it to `token`.
                 params = inspect.signature(Client.__init__).parameters
-                kwargs["token" if "token" in params else "hf_token"] = settings.HF_TOKEN
-            self._client = Client(settings.HF_TRYON_SPACE, **kwargs)
-        return self._client
+                kwargs["token" if "token" in params else "hf_token"] = token
+            self._clients[token] = Client(settings.HF_TRYON_SPACE, **kwargs)
+        return self._clients[token]
 
-    def _predict_blocking(self, person_path: str, garment_path: str, description: str, seed: int) -> bytes:
+    def _ordered_tokens(self):
+        """Round-robin start (spreads load across accounts); tokens in cooldown go last."""
+        tokens = _configured_tokens()
+        n = len(tokens)
+        start, self._rr = self._rr % n, self._rr + 1
+        rotated = tokens[start:] + tokens[:start]
+        now = time.monotonic()
+        fresh = [t for t in rotated if self._exhausted_until.get(t, 0) <= now]
+        return fresh + [t for t in rotated if t not in fresh]
+
+    def _predict_with(self, token: str, person_path: str, garment_path: str, description: str, seed: int) -> bytes:
         from gradio_client import handle_file
 
-        client = self._get_client()
-        out = client.predict(
+        out = self._get_client(token).predict(
             {"background": handle_file(person_path), "layers": [], "composite": None},
             handle_file(garment_path),
             description,
@@ -91,6 +120,22 @@ class HFSpaceTryOnProvider:
         )
         result_path = out[0] if isinstance(out, (list, tuple)) else out
         return Path(result_path).read_bytes()
+
+    def _predict_blocking(self, person_path: str, garment_path: str, description: str, seed: int) -> bytes:
+        last_err: Optional[Exception] = None
+        for token in self._ordered_tokens():
+            label = f"token ...{token[-4:]}" if token else "anonymous"
+            try:
+                return self._predict_with(token, person_path, garment_path, description, seed)
+            except Exception as err:  # noqa: BLE001
+                last_err = err
+                self._clients.pop(token, None)  # reconnect fresh next time
+                if _is_quota_error(str(err)):
+                    self._exhausted_until[token] = time.monotonic() + self.COOLDOWN_SECONDS
+                    logger.warning("HF try-on: %s has no quota left, trying next account", label)
+                    continue
+                raise
+        raise last_err if last_err else RuntimeError("no Hugging Face account available")
 
     async def generate_try_on(
         self,
@@ -142,10 +187,9 @@ class HFSpaceTryOnProvider:
                 "error": None,
             }
         except Exception as err:  # noqa: BLE001 - quota/queue/network errors must not break analysis
-            self._client = None  # reconnect next time
             self._load_error = str(err)
             msg = str(err)
-            if "quota" in msg.lower() or msg.strip("'\" ") == "RuntimeError":  # bare RuntimeError = ZeroGPU refused (no quota left for this IP)
+            if _is_quota_error(msg):
                 msg = ("Free GPU quota for the try-on model is used up for now. Try again later, "
                        "or set a free HF_TOKEN (huggingface.co/settings/tokens) to get your own daily quota.")
             logger.error("HF Space try-on failed: %s", err)
