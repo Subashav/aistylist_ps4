@@ -1,0 +1,15 @@
+backend/venv
+backend/weights
+backend/uploads
+backend/scratch
+backend/*.db
+frontend/build
+frontend/android
+frontend/ios
+frontend/lib
+frontend/test
+**/__pycache__
+**/.env
+.env
+*.db
+uploads

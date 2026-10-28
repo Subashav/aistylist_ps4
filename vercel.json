@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{backend/venv/**,backend/weights/**,backend/app/services/fashn_vton/**,**/__pycache__/**,frontend/**}"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/((?:auth|analyze|saved-results|virtual-tryon|diagnostics|health|docs|openapi.json|redoc)(?:/.*)?)",
+      "destination": "/api/index?__path=$1"
+    }
+  ]
+}
