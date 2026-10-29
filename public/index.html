@@ -2375,7 +2375,8 @@
           <div class="garment-type-row">
             <label for="categorySelect">Garment Type:</label>
             <select id="categorySelect" class="garment-select">
-              <option value="T-shirt" selected>T-shirt / Casual Top</option>
+              <option value="" selected>Auto-detect</option>
+              <option value="T-shirt">T-shirt / Casual Top</option>
               <option value="Shirt">Button-down / Collared Shirt</option>
               <option value="Jacket">Jacket / Blazer / Outerwear</option>
               <option value="Sweater">Sweater / Knitwear / Hoodie</option>
@@ -3208,7 +3209,7 @@
         const file = new File([blob], 'demo_royal_blue_tee.jpg', { type: 'image/jpeg' });
         garmentImageFile = file;
         renderImagePreview(file, 'garmentImgPreview', 'garmentEmptyContent', 'garmentActionsBar', 'garmentDropzone');
-        document.getElementById('categorySelect').value = 'T-shirt';
+        document.getElementById('categorySelect').value = '';
         showToast('Royal Blue T-Shirt loaded');
       }, 'image/jpeg');
     }

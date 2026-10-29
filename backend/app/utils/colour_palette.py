@@ -29,6 +29,14 @@ FASHION_PALETTE = [
     {"base": "Olive", "shade": "Olive Green", "hex": "#808000", "rgb": (128, 128, 0)},
     {"base": "Olive", "shade": "Dark Olive", "hex": "#556B2F", "rgb": (85, 107, 47)},
     
+    # DEEP CHROMATIC SHADES (so dark wine/navy/forest are not mistaken for black)
+    {"base": "Maroon", "shade": "Deep Wine", "hex": "#4A1C2A", "rgb": (74, 28, 42)},
+    {"base": "Maroon", "shade": "Dark Burgundy", "hex": "#5C1A2B", "rgb": (92, 26, 43)},
+    {"base": "Maroon", "shade": "Oxblood", "hex": "#4A0404", "rgb": (74, 4, 4)},
+    {"base": "Blue", "shade": "Midnight Navy", "hex": "#14213D", "rgb": (20, 33, 61)},
+    {"base": "Green", "shade": "Forest Green", "hex": "#1B3A2A", "rgb": (27, 58, 42)},
+    {"base": "Purple", "shade": "Aubergine", "hex": "#3B1F3F", "rgb": (59, 31, 63)},
+
     # NEUTRALS (BLACK, WHITE, GREY)
     {"base": "Black", "shade": "Jet Black", "hex": "#111111", "rgb": (17, 17, 17)},
     {"base": "Black", "shade": "Soft Black", "hex": "#2B2B2B", "rgb": (43, 43, 43)},

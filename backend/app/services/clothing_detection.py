@@ -96,6 +96,6 @@ def detect_clothing_region(image_bgr: np.ndarray) -> Tuple[np.ndarray, np.ndarra
     elif aspect_ratio < 0.6:
         inferred_category = "Dress / Long Coat"
     else:
-        inferred_category = "T-shirt"
+        inferred_category = "Shirt"
         
     return fabric_pixels_rgb, masked_garment_bgr, inferred_category
