@@ -180,7 +180,7 @@ class HFSpaceTryOnProvider:
             out = client.predict(
                 handle_file(person_path),
                 handle_file(garment_path),
-                "False", 30, 2.5, int(seed), "viton_hd", "lower_body", "False",
+                False, 30, 2.5, int(seed), "viton_hd", "lower_body", False,
                 api_name="/leffa_predict_vt",
             )
             first = out[0]
