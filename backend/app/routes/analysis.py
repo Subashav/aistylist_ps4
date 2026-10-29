@@ -196,18 +196,19 @@ async def analyze_clothing(
         available = sorted(models_dir.glob("*.jpg")) + sorted(models_dir.glob("*.png"))
         if not available:
             return None
-        if wants_women:
-            return available[slot % len(available)]
         text = f"{look.get('title', '')} {look.get('style', '')}".lower()
         if "evening" in text:
-            name = "evening_minimalist.jpg"
+            wanted = "evening_minimalist"
         elif "layer" in text or "elevated" in text:
-            name = "elevated_casual___layered.jpg"
+            wanted = "elevated_casual"
         elif "smart" in text or "elegan" in text or slot == 1:
-            name = "smart_casual_elegance.jpg"
+            wanted = "smart_casual_elegance"
         else:
-            name = "casual_classic.jpg"
-        return models_dir / name
+            wanted = "casual_classic"
+        for path in available:
+            if path.stem.startswith(wanted):
+                return path
+        return available[slot % len(available)]
 
     def _person_for(idx: int, look: Dict[str, Any]):
         if idx == 0 and has_portrait:
