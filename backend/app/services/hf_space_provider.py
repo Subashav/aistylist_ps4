@@ -309,13 +309,16 @@ class HFSpaceTryOnProvider:
             description = str(bottom or "")
         description = description or "charcoal tailored trousers"
         t0 = time.perf_counter()
+        stage = "preparing"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmpdir = Path(tmp)
                 person_path = await asyncio.to_thread(_to_jpeg_file, base_image, tmpdir, "base", "PNG")
+                stage = "trousers image (FLUX)"
                 garment_bytes = await asyncio.wait_for(
                     asyncio.to_thread(self._bottom_garment_bytes, description), timeout=settings.HF_TRYON_TIMEOUT
                 )
+                stage = "fitting trousers (Leffa)"
                 garment_path = await asyncio.to_thread(_to_jpeg_file, garment_bytes, tmpdir, "bottom", "PNG")
                 img_bytes = await asyncio.wait_for(
                     asyncio.to_thread(self._lower_body_blocking, person_path, garment_path, seed),
@@ -338,7 +341,7 @@ class HFSpaceTryOnProvider:
         except Exception as err:  # noqa: BLE001
             msg = str(err)
             if _is_quota_error(msg):
-                msg = "Free GPU quota is used up for now. Try again later or add more Hugging Face tokens."
+                msg = "Look 2 needs more free GPU time than the accounts have left today (it resets daily). Try again later or add another Hugging Face token."
             logger.error("Complete-look generation failed: %s", err)
             return {
                 "success": False,
