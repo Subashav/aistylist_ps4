@@ -192,6 +192,7 @@ async def analyze_clothing(
     # Men's editorial photos live in models/ (original set); women's in models/women/.
     models_dir = models_root / "women" if wants_women else models_root
     has_portrait = bool(u_path and u_path.exists())
+    photo_is_full_body = (full_body or "").strip().lower() in ("1", "true", "yes", "on")
 
     def _pick_model(look: Dict[str, Any], slot: int) -> Optional[Path]:
         available = sorted(models_dir.glob("*.jpg")) + sorted(models_dir.glob("*.png"))
@@ -233,11 +234,11 @@ async def analyze_clothing(
             detected_colour_hex=color_info["hex_value"],
             semantic_data=semantic_data,
             seed=42 + idx * 101,
+            full_body=has_portrait and idx == 0 and photo_is_full_body,
         )
         return res, source
 
     looks = recommendations["outfit_suggestions"]
-    photo_is_full_body = (full_body or "").strip().lower() in ("1", "true", "yes", "on")
     can_complete_look = _local.__class__.__name__ == "HFSpaceTryOnProvider" and hasattr(_local, "generate_complete_look")
 
     async def _portrait_flow():

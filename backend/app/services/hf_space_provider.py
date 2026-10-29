@@ -61,6 +61,38 @@ def _torso_changed(person_path: str, result: bytes, threshold: float = 0.10) -> 
         return True
 
 
+def _build_body_mask(person_path: str, out_path: str) -> Optional[str]:
+    """
+    Mask of the whole body below the chin (clothes, shawl, trousers, shoes), so the try-on repaints the
+    complete outfit while the face, hair, pose and background stay as photographed.
+    Uses a free CPU background-remover Space for the person cut-out; None if it is unavailable.
+    """
+    try:
+        import cv2
+        import numpy as np
+        from gradio_client import Client, handle_file
+
+        res = Client("briaai/BRIA-RMBG-1.4").predict(handle_file(person_path), api_name="/run")
+        alpha = np.array(Image.open(res[1]).convert("RGBA"))[:, :, 3]
+        w, h = Image.open(person_path).size
+        person = (cv2.resize(alpha, (w, h)) > 128).astype(np.uint8) * 255
+        rows = np.where(person.any(axis=1))[0]
+        if len(rows) < h * 0.4:
+            return None  # not a usable full-body cut-out
+        top, bottom = int(rows.min()), int(rows.max())
+        mask = person.copy()
+        mask[: int(top + 0.135 * (bottom - top))] = 0  # keep head and hair
+        mask = cv2.dilate(mask, np.ones((15, 15), np.uint8))
+        layer = np.zeros((h, w, 4), np.uint8)
+        layer[..., :3] = mask[..., None]
+        layer[..., 3] = 255
+        Image.fromarray(layer, "RGBA").save(out_path)
+        return out_path
+    except Exception as err:  # noqa: BLE001
+        logger.warning("Body mask unavailable (%s); using the standard upper-body mask", err)
+        return None
+
+
 def _trim_garment(path: str) -> str:
     """Crop a product photo to the garment itself (uniform light border -> tight box on white)."""
     try:
@@ -148,14 +180,21 @@ class HFSpaceTryOnProvider:
         fresh = [t for t in rotated if self._exhausted_until.get(t, 0) <= now]
         return fresh + [t for t in rotated if t not in fresh]
 
-    def _predict_with(self, token: str, person_path: str, garment_path: str, description: str, seed: int) -> bytes:
+    def _predict_with(self, token: str, person_path: str, garment_path: str, description: str, seed: int,
+                      mask_path: Optional[str] = None) -> bytes:
         from gradio_client import handle_file
 
+        if mask_path:
+            # Our own mask: everything below the chin is repainted, face/hair/background are kept.
+            editor = {"background": handle_file(person_path), "layers": [handle_file(mask_path)],
+                      "composite": handle_file(person_path)}
+        else:
+            editor = {"background": handle_file(person_path), "layers": [], "composite": None}
         out = self._get_client(token).predict(
-            {"background": handle_file(person_path), "layers": [], "composite": None},
+            editor,
             handle_file(garment_path),
             description,
-            True,   # auto-generated person mask
+            not mask_path,  # auto-generated person mask only when we supply none
             False,  # no crop/resize
             int(settings.HF_TRYON_STEPS),
             int(seed),
@@ -164,12 +203,13 @@ class HFSpaceTryOnProvider:
         result_path = out[0] if isinstance(out, (list, tuple)) else out
         return Path(result_path).read_bytes()
 
-    def _predict_blocking(self, person_path: str, garment_path: str, description: str, seed: int) -> bytes:
+    def _predict_blocking(self, person_path: str, garment_path: str, description: str, seed: int,
+                          mask_path: Optional[str] = None) -> bytes:
         last_err: Optional[Exception] = None
         for token in self._ordered_tokens():
             label = f"token ...{token[-4:]}" if token else "anonymous"
             try:
-                return self._predict_with(token, person_path, garment_path, description, seed)
+                return self._predict_with(token, person_path, garment_path, description, seed, mask_path)
             except Exception as err:  # noqa: BLE001
                 last_err = err
                 self._clients.pop((settings.HF_TRYON_SPACE, token), None)  # reconnect fresh next time
@@ -333,8 +373,11 @@ class HFSpaceTryOnProvider:
                 garment_path = await asyncio.to_thread(_to_jpeg_file, garment_image, tmpdir, "garment", "PNG")
                 description = f"a {detected_colour_shade} {category}".strip().lower() if detected_colour_shade else f"a {category}".lower()
                 garment_path = await asyncio.to_thread(_trim_garment, garment_path)
+                mask_path = None
+                if kwargs.get("full_body"):
+                    mask_path = await asyncio.to_thread(_build_body_mask, person_path, str(tmpdir / "mask.png"))
                 img_bytes = await asyncio.wait_for(
-                    asyncio.to_thread(self._predict_blocking, person_path, garment_path, description, seed),
+                    asyncio.to_thread(self._predict_blocking, person_path, garment_path, description, seed, mask_path),
                     timeout=settings.HF_TRYON_TIMEOUT,
                 )
                 if not _torso_changed(person_path, img_bytes):
