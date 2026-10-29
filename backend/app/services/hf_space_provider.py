@@ -43,6 +43,47 @@ def _to_jpeg_file(img_input: Union[str, Path, bytes, Image.Image], directory: Pa
     return str(path)
 
 
+def _torso_changed(person_path: str, result: bytes, threshold: float = 0.10) -> bool:
+    """True when the try-on actually repainted the upper body (not just returned the input photo)."""
+    try:
+        import numpy as np
+
+        a = Image.open(person_path).convert("RGB")
+        b = Image.open(BytesIO(result)).convert("RGB").resize(a.size)
+        size = (128, max(1, int(128 * a.height / a.width)))
+        x = np.asarray(a.resize(size), dtype=np.int16)
+        y = np.asarray(b.resize(size), dtype=np.int16)
+        h = x.shape[0]
+        band = slice(int(h * 0.18), int(h * 0.50))  # shoulders to hips
+        diff = np.abs(x[band] - y[band]).sum(axis=2) > 40
+        return float(diff.mean()) >= threshold
+    except Exception:  # noqa: BLE001 - never block a result on the check itself
+        return True
+
+
+def _trim_garment(path: str) -> str:
+    """Crop a product photo to the garment itself (uniform light border -> tight box on white)."""
+    try:
+        import numpy as np
+
+        img = Image.open(path).convert("RGB")
+        arr = np.asarray(img, dtype=np.int16)
+        border = np.concatenate([arr[0], arr[-1], arr[:, 0], arr[:, -1]])
+        bg = np.median(border, axis=0)
+        if bg.min() < 200 or border.std(axis=0).max() > 12:
+            return path  # busy or dark background: leave as is
+        mask = np.abs(arr - bg).sum(axis=2) > 60
+        ys, xs = np.where(mask)
+        if len(ys) < 0.02 * mask.size:
+            return path
+        pad = int(0.04 * max(img.size))
+        box = (max(xs.min() - pad, 0), max(ys.min() - pad, 0), min(xs.max() + pad, img.width), min(ys.max() + pad, img.height))
+        img.crop(box).save(path, format="PNG")
+    except Exception:  # noqa: BLE001
+        pass
+    return path
+
+
 def _configured_tokens():
     """All distinct HF tokens (HF_TOKENS comma list + HF_TOKEN); [""] means anonymous."""
     raw = (settings.HF_TOKENS or "").split(",") + [settings.HF_TOKEN or ""]
@@ -172,7 +213,8 @@ class HFSpaceTryOnProvider:
 
         return self._rotate(call)
 
-    def _lower_body_blocking(self, person_path: str, garment_path: str, seed: int) -> bytes:
+    def _leffa_blocking(self, person_path: str, garment_path: str, seed: int,
+                        control_type: str = "dress_code", cloth_type: str = "lower_body") -> bytes:
         from gradio_client import handle_file
 
         def call(token: str) -> bytes:
@@ -180,7 +222,7 @@ class HFSpaceTryOnProvider:
             out = client.predict(
                 handle_file(person_path),
                 handle_file(garment_path),
-                False, 30, 2.5, int(seed), "dress_code", "lower_body", False,
+                False, 30, 2.5, int(seed), control_type, cloth_type, False,
                 api_name="/leffa_predict_vt",
             )
             first = out[0]
@@ -188,6 +230,13 @@ class HFSpaceTryOnProvider:
             return Path(path).read_bytes()
 
         return self._rotate(call)
+
+    def _lower_body_blocking(self, person_path: str, garment_path: str, seed: int) -> bytes:
+        return self._leffa_blocking(person_path, garment_path, seed, "dress_code", "lower_body")
+
+    def _upper_body_blocking(self, person_path: str, garment_path: str, seed: int) -> bytes:
+        """Second opinion for tops when IDM-VTON leaves the person's own clothes untouched."""
+        return self._leffa_blocking(person_path, garment_path, seed, "viton_hd", "upper_body")
 
     def _bottom_garment_bytes(self, description: str) -> bytes:
         """Product image of the suggested trousers; generated once, then cached in the bucket."""
@@ -283,10 +332,27 @@ class HFSpaceTryOnProvider:
                 person_path = await asyncio.to_thread(_to_jpeg_file, person_image, tmpdir, "person")
                 garment_path = await asyncio.to_thread(_to_jpeg_file, garment_image, tmpdir, "garment", "PNG")
                 description = f"a {detected_colour_shade} {category}".strip().lower() if detected_colour_shade else f"a {category}".lower()
+                garment_path = await asyncio.to_thread(_trim_garment, garment_path)
                 img_bytes = await asyncio.wait_for(
                     asyncio.to_thread(self._predict_blocking, person_path, garment_path, description, seed),
                     timeout=settings.HF_TRYON_TIMEOUT,
                 )
+                if not _torso_changed(person_path, img_bytes):
+                    logger.warning("IDM-VTON left the torso unchanged; retrying with Leffa upper-body")
+                    try:
+                        alt = await asyncio.wait_for(
+                            asyncio.to_thread(self._upper_body_blocking, person_path, garment_path, seed),
+                            timeout=settings.HF_TRYON_TIMEOUT,
+                        )
+                    except Exception as alt_err:  # noqa: BLE001
+                        logger.warning("Leffa upper-body fallback failed: %s", alt_err)
+                        alt = None
+                    if alt is None or not _torso_changed(person_path, alt):
+                        raise RuntimeError(
+                            "The garment could not be fitted onto this photo. Use a clear, front-facing photo "
+                            "and a flat product-style photo of the garment."
+                        )
+                    img_bytes = alt
 
             filename = f"tryon_{uuid.uuid4().hex}.png"
             image_url = await asyncio.to_thread(persist_bytes, img_bytes, f"virtual_tryon/{filename}", "image/png")
