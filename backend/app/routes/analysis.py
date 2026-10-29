@@ -56,6 +56,7 @@ async def analyze_clothing(
     clothing_image: UploadFile = File(...),
     user_image: Optional[UploadFile] = File(None),
     clothing_category_hint: Optional[str] = Form(None),
+    model_style: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -185,10 +186,18 @@ async def analyze_clothing(
     # Look 1 = the user's own portrait wearing the garment. Look 2 = the same garment on a full-body
     # editorial model who is already in a complete outfit (trousers, shoes...), i.e. a styled head-to-toe look.
     # Without a portrait, both looks use editorial models.
-    models_dir = BASE_DIR / "app" / "assets" / "models"
+    models_root = BASE_DIR / "app" / "assets" / "models"
+    wants_women = (model_style or "").strip().lower() == "women"
+    # Men's editorial photos live in models/ (original set); women's in models/women/.
+    models_dir = models_root / "women" if wants_women else models_root
     has_portrait = bool(u_path and u_path.exists())
 
-    def _pick_model(look: Dict[str, Any], slot: int) -> Path:
+    def _pick_model(look: Dict[str, Any], slot: int) -> Optional[Path]:
+        available = sorted(models_dir.glob("*.jpg")) + sorted(models_dir.glob("*.png"))
+        if not available:
+            return None
+        if wants_women:
+            return available[slot % len(available)]
         text = f"{look.get('title', '')} {look.get('style', '')}".lower()
         if "evening" in text:
             name = "evening_minimalist.jpg"
@@ -207,6 +216,12 @@ async def analyze_clothing(
 
     async def _run_look(idx: int, look: Dict[str, Any]):
         person, source = _person_for(idx, look)
+        if person is None:
+            return {
+                "success": False,
+                "result_type": "unavailable",
+                "message": "No styled model photos for this selection yet, so look 2 is shown as an outfit guide.",
+            }, source
         res = await vton_provider.generate_try_on(
             person_image=person,
             garment_image=c_path,
