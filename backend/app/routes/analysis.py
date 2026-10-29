@@ -57,6 +57,7 @@ async def analyze_clothing(
     user_image: Optional[UploadFile] = File(None),
     clothing_category_hint: Optional[str] = Form(None),
     model_style: Optional[str] = Form(None),
+    full_body: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -236,8 +237,37 @@ async def analyze_clothing(
         return res, source
 
     looks = recommendations["outfit_suggestions"]
-    jobs = [_run_look(i, l) for i, l in enumerate(looks) if i < max_looks_to_generate]
-    job_results = await asyncio.gather(*jobs, return_exceptions=True)  # parallel; different HF accounts
+    photo_is_full_body = (full_body or "").strip().lower() in ("1", "true", "yes", "on")
+    can_complete_look = _local.__class__.__name__ == "HFSpaceTryOnProvider" and hasattr(_local, "generate_complete_look")
+
+    async def _portrait_flow():
+        """Both looks use the user's real photo: (1) garment on the user, (2) that result + suggested trousers."""
+        first = await _run_look(0, looks[0])
+        results = [first]
+        if max_looks_to_generate > 1 and len(looks) > 1:
+            res1 = first[0]
+            if not photo_is_full_body:
+                res2 = {
+                    "success": False,
+                    "result_type": "unavailable",
+                    "message": "Upload a full-body photo (head to toe) to see a complete outfit on you.",
+                }
+            elif res1.get("success") and res1.get("image_bytes"):
+                res2 = await _local.generate_complete_look(res1["image_bytes"], looks[1])
+            else:
+                res2 = {
+                    "success": False,
+                    "result_type": "unavailable",
+                    "message": res1.get("message") or "The first try-on failed, so look 2 could not be built.",
+                }
+            results.append((res2, "you_complete"))
+        return results
+
+    if has_portrait and can_complete_look:
+        job_results = await _portrait_flow()
+    else:
+        jobs = [_run_look(i, l) for i, l in enumerate(looks) if i < max_looks_to_generate]
+        job_results = await asyncio.gather(*jobs, return_exceptions=True)  # parallel; different HF accounts
 
     for idx, outfit_data in enumerate(looks):
         try:

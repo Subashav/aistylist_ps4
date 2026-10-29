@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     # a free HF_TOKEN gives a bigger daily GPU quota. Licence: CC BY-NC-SA 4.0 (non-commercial).
     HF_TRYON_ENABLED: bool = True
     HF_TRYON_SPACE: str = "yisol/IDM-VTON"
+    HF_BOTTOM_SPACE: str = "black-forest-labs/FLUX.1-schnell"  # makes the suggested-trousers product image
+    HF_LOWER_SPACE: str = "franciszzj/Leffa"  # lower-body try-on (MIT)
     HF_TRYON_STEPS: int = 30
     # Free ZeroGPU quota is limited (~tens of seconds per try-on): render at most this many looks per analysis.
     HF_TRYON_MAX_LOOKS: int = 2

@@ -2384,7 +2384,14 @@
             </select>
           </div>
           <div class="garment-type-row">
-            <label for="modelStyleSelect">Look 02 on:</label>
+            <label for="fullBodyCheck">Full-body photo:</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;text-transform:none;letter-spacing:0;">
+              <input type="checkbox" id="fullBodyCheck" checked onchange="try { LS.setItem('ai_stylist_full_body', this.checked ? '1' : '0'); } catch (e) {}">
+              My photo shows me head to toe (Look 02 = complete outfit on me)
+            </label>
+          </div>
+          <div class="garment-type-row">
+            <label for="modelStyleSelect">No photo? Show on:</label>
             <select id="modelStyleSelect" class="garment-select" onchange="try { LS.setItem('ai_stylist_model_style', this.value); } catch (e) {}">
               <option value="women" selected>Women's styled model</option>
               <option value="men">Men's styled model</option>
@@ -2643,6 +2650,8 @@
     let currentAnalysisData = null;
 
     window.addEventListener('DOMContentLoaded', async () => {
+      const savedFull = LS.getItem('ai_stylist_full_body');
+      if (savedFull !== null) { const fb = document.getElementById('fullBodyCheck'); if (fb) fb.checked = savedFull === '1'; }
       const savedStyle = LS.getItem('ai_stylist_model_style');
       if (savedStyle) { const el = document.getElementById('modelStyleSelect'); if (el) el.value = savedStyle; }
       await checkSession();
@@ -3271,6 +3280,7 @@
         }
         formData.append('clothing_category_hint', document.getElementById('categorySelect').value);
         formData.append('model_style', document.getElementById('modelStyleSelect').value);
+        formData.append('full_body', document.getElementById('fullBodyCheck').checked ? '1' : '0');
 
         let headers = {};
         if (authToken) {
@@ -3441,7 +3451,7 @@
           <div class="look-card-header">
             <span class="look-number-label">${lookNumStr}</span>
             <span class="look-badge ${isActualTryOn ? 'actual-tryon' : 'guide-mode'}">
-              ${isActualTryOn ? (look.person_source === 'editorial_model' ? 'STYLED LOOK · COMPLETE OUTFIT' : 'ACTUAL TRY-ON · YOU') : 'OUTFIT & MATERIAL GUIDE'}
+              ${isActualTryOn ? (look.person_source === 'editorial_model' ? 'STYLED LOOK · COMPLETE OUTFIT' : (look.person_source === 'you_complete' ? 'COMPLETE LOOK · YOU' : 'ACTUAL TRY-ON · YOU')) : 'OUTFIT & MATERIAL GUIDE'}
             </span>
           </div>
 

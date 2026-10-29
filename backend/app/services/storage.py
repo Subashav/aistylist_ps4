@@ -71,6 +71,26 @@ def s3_get(key: str):
     return r.content, r.headers.get("content-type")
 
 
+def get_fixed(key: str) -> Optional[bytes]:
+    """Read a cache object by exact key from the Neon bucket; None if absent or storage is not configured."""
+    if not s3_enabled():
+        return None
+    try:
+        return _sigv4_request("GET", key).content
+    except Exception:  # noqa: BLE001 - missing key (404) or transient error: treat as a cache miss
+        return None
+
+
+def put_fixed(key: str, data: bytes, content_type: str = "image/png") -> None:
+    """Write a cache object under an exact key (no random suffix). Best effort."""
+    if not s3_enabled():
+        return
+    try:
+        _sigv4_request("PUT", key, data, content_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Cache write failed for %s: %s", key, exc)
+
+
 def persist_bytes(data: bytes, pathname: str, content_type: Optional[str] = None) -> Optional[str]:
     """
     Store bytes durably and return the URL to use in API responses, or None when nothing is configured.

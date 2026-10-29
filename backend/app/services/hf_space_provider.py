@@ -18,7 +18,7 @@ from PIL import Image
 
 from app.config import settings, ON_VERCEL
 from app.services.fashn_vton_local_provider import normalize_clothing_category
-from app.services.storage import persist_bytes
+from app.services.storage import persist_bytes, get_fixed, put_fixed
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,10 @@ class HFSpaceTryOnProvider:
     def load_model(self):  # interface parity
         return
 
-    def _get_client(self, token: str = ""):
-        if token not in self._clients:
+    def _get_client(self, token: str = "", space: Optional[str] = None):
+        space = space or settings.HF_TRYON_SPACE
+        key = (space, token)
+        if key not in self._clients:
             import inspect
 
             from gradio_client import Client
@@ -92,8 +94,8 @@ class HFSpaceTryOnProvider:
                 # gradio_client 1.x calls this `hf_token`, 2.x renamed it to `token`.
                 params = inspect.signature(Client.__init__).parameters
                 kwargs["token" if "token" in params else "hf_token"] = token
-            self._clients[token] = Client(settings.HF_TRYON_SPACE, **kwargs)
-        return self._clients[token]
+            self._clients[key] = Client(space, **kwargs)
+        return self._clients[key]
 
     def _ordered_tokens(self):
         """Round-robin start (spreads load across accounts); tokens in cooldown go last."""
@@ -129,13 +131,131 @@ class HFSpaceTryOnProvider:
                 return self._predict_with(token, person_path, garment_path, description, seed)
             except Exception as err:  # noqa: BLE001
                 last_err = err
-                self._clients.pop(token, None)  # reconnect fresh next time
+                self._clients.pop((settings.HF_TRYON_SPACE, token), None)  # reconnect fresh next time
                 if _is_quota_error(str(err)):
                     self._exhausted_until[token] = time.monotonic() + self.COOLDOWN_SECONDS
                     logger.warning("HF try-on: %s has no quota left, trying next account", label)
                     continue
                 raise
         raise last_err if last_err else RuntimeError("no Hugging Face account available")
+
+    # ------------------------------------------------------------------
+    # Complete look on the user's real photo: add suggested trousers (Leffa, lower body)
+    # ------------------------------------------------------------------
+    def _rotate(self, fn):
+        """Run fn(token) against each configured HF account in turn until one has quota."""
+        last_err: Optional[Exception] = None
+        for token in self._ordered_tokens():
+            try:
+                return fn(token)
+            except Exception as err:  # noqa: BLE001
+                last_err = err
+                if _is_quota_error(str(err)):
+                    self._exhausted_until[token] = time.monotonic() + self.COOLDOWN_SECONDS
+                    continue
+                raise
+        raise last_err if last_err else RuntimeError("no Hugging Face account available")
+
+    def _generate_bottom_blocking(self, description: str) -> bytes:
+        """Text-to-image (FLUX.1-schnell, MIT) for a clean product photo of the trousers."""
+        prompt = (
+            f"product photo of {description}, laid flat, front view, centered, plain white background, "
+            "studio lighting, no model, no mannequin, high detail fabric texture"
+        )
+
+        def call(token: str) -> bytes:
+            client = self._get_client(token, settings.HF_BOTTOM_SPACE)
+            out = client.predict(prompt, 11, False, 768, 768, 4, api_name="/infer")
+            first = out[0]
+            path = first["path"] if isinstance(first, dict) else first
+            return Path(path).read_bytes()
+
+        return self._rotate(call)
+
+    def _lower_body_blocking(self, person_path: str, garment_path: str, seed: int) -> bytes:
+        from gradio_client import handle_file
+
+        def call(token: str) -> bytes:
+            client = self._get_client(token, settings.HF_LOWER_SPACE)
+            out = client.predict(
+                handle_file(person_path),
+                handle_file(garment_path),
+                "False", 30, 2.5, int(seed), "viton_hd", "lower_body", "False",
+                api_name="/leffa_predict_vt",
+            )
+            first = out[0]
+            path = first["path"] if isinstance(first, dict) else first
+            return Path(path).read_bytes()
+
+        return self._rotate(call)
+
+    def _bottom_garment_bytes(self, description: str) -> bytes:
+        """Product image of the suggested trousers; generated once, then cached in the bucket."""
+        import re as _re
+
+        key = "garment-cache/bottom_" + _re.sub(r"[^a-z0-9]+", "_", description.lower()).strip("_")[:60] + ".png"
+        cached = get_fixed(key)
+        if cached:
+            return cached
+        data = self._generate_bottom_blocking(description)
+        buf = BytesIO()
+        Image.open(BytesIO(data)).convert("RGB").save(buf, format="PNG")
+        put_fixed(key, buf.getvalue())
+        return buf.getvalue()
+
+    async def generate_complete_look(
+        self,
+        base_image: bytes,
+        look: Dict[str, Any],
+        seed: int = 142,
+    ) -> Dict[str, Any]:
+        """
+        Take the user's try-on result (garment already on) and dress the lower body in the look's
+        suggested trousers, so the user sees a complete outfit. Needs a full-body photo.
+        """
+        bottom = look.get("bottom")
+        if isinstance(bottom, dict):
+            description = f"{bottom.get('color', '')} {bottom.get('item', '')}".strip()
+        else:
+            description = str(bottom or "")
+        description = description or "charcoal tailored trousers"
+        t0 = time.perf_counter()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmpdir = Path(tmp)
+                person_path = await asyncio.to_thread(_to_jpeg_file, base_image, tmpdir, "base", "PNG")
+                garment_bytes = await asyncio.wait_for(
+                    asyncio.to_thread(self._bottom_garment_bytes, description), timeout=settings.HF_TRYON_TIMEOUT
+                )
+                garment_path = await asyncio.to_thread(_to_jpeg_file, garment_bytes, tmpdir, "bottom", "PNG")
+                img_bytes = await asyncio.wait_for(
+                    asyncio.to_thread(self._lower_body_blocking, person_path, garment_path, seed),
+                    timeout=settings.HF_TRYON_TIMEOUT,
+                )
+            filename = f"look2_{uuid.uuid4().hex}.png"
+            image_url = await asyncio.to_thread(persist_bytes, img_bytes, f"virtual_tryon/{filename}", "image/png")
+            if not image_url:
+                if ON_VERCEL:
+                    raise RuntimeError("No durable storage configured to hold the image")
+                (settings.VIRTUAL_TRYON_DIR / filename).write_bytes(img_bytes)
+                image_url = f"/uploads/virtual_tryon/{filename}"
+            return {
+                "success": True,
+                "result_type": "actual_try_on",
+                "image_url": image_url,
+                "provider": "hf_space_complete_look",
+                "execution_time_seconds": round(time.perf_counter() - t0, 2),
+            }
+        except Exception as err:  # noqa: BLE001
+            msg = str(err)
+            if _is_quota_error(msg):
+                msg = "Free GPU quota is used up for now. Try again later or add more Hugging Face tokens."
+            logger.error("Complete-look generation failed: %s", err)
+            return {
+                "success": False,
+                "result_type": "unavailable",
+                "message": f"Complete look unavailable: {msg[:240]}",
+            }
 
     async def generate_try_on(
         self,
@@ -182,6 +302,7 @@ class HFSpaceTryOnProvider:
                 "result_type": "actual_try_on",
                 "image_url": image_url,
                 "provider": "hf_space_idm_vton",
+                "image_bytes": img_bytes,  # internal: look 2 builds on this (never sent to clients)
                 "category": fashn_cat,
                 "execution_time_seconds": round(elapsed, 2),
                 "error": None,
